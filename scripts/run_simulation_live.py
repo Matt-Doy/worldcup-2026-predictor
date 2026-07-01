@@ -1,12 +1,11 @@
 """
-Simulation 'live' de la Coupe du Monde 2026 : utilise les vrais resultats
-de phase de groupes deja joues (presents dans results.csv) et ne simule
-que les matchs restants (fin de phase de groupes + phases finales).
+Simulation Monte Carlo 'live' de la Coupe du Monde 2026.
 
-Variante de run_simulation.py, qui repartait de zero meme pour des
-matchs deja joues. Ici les matchs reels comptent comme des points/buts
-fixes, identiques dans toutes les simulations Monte Carlo ; seul ce qui
-n'a pas encore ete joue est tire au hasard.
+Les vrais resultats deja joues (results.csv) sont fixes ; seuls les matchs
+restants sont tires au sort. L'Elo est recalcule depuis les matchs joues
+directement (compute_tournament_elo), sans attendre eloratings.net.
+
+Mettre a jour model_utils.REAL_R32_WINNERS apres chaque journee de matchs.
 
 Lancer depuis le dossier scripts/ : python run_simulation_live.py
 """
@@ -15,6 +14,15 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error
+from model_utils import (
+    compute_tournament_elo,
+    R32_INFO, REAL_R32_WINNERS,
+    R16_WIRING, R16_VENUE,
+    QF_WIRING, QF_VENUE,
+    SF_WIRING, SF_VENUE,
+    FINAL_WIRING, FINAL_VENUE,
+    ALL_R32_TEAMS,
+)
 
 np.random.seed(42)
 
@@ -128,37 +136,6 @@ real_lookup = {
 
 print(f"Matchs WC2026 deja joues : {len(real_lookup)}")
 
-
-def compute_tournament_elo(wc_matches, pre_elo, K=40):
-    """
-    Applique les mises a jour Elo pour tous les matchs WC2026 deja joues
-    (dans l'ordre chronologique) sur les ratings pre-tournoi.
-    Capture les matchs du jour immediatement, sans attendre eloratings.net
-    (qui a un delai de 24-48h apres chaque journee de matchs).
-    Formule identique a eloratings.net : K=40 pour les matchs de CM,
-    facteur G de difference de buts, tirage = 0.5.
-    """
-    elo_dict = dict(pre_elo)
-    for _, m in wc_matches.sort_values("date").iterrows():
-        home, away = m["home_team"], m["away_team"]
-        if home not in elo_dict or away not in elo_dict:
-            continue
-        elo_h, elo_a = elo_dict[home], elo_dict[away]
-        expected_h = 1 / (1 + 10 ** ((elo_a - elo_h) / 400))
-        gd = abs(m["home_score"] - m["away_score"])
-        G = 1 if gd <= 1 else (1.5 if gd == 2 else (11 + gd) / 8)
-        if m["home_score"] > m["away_score"]:
-            result_h = 1.0
-        elif m["home_score"] < m["away_score"]:
-            result_h = 0.0
-        else:
-            result_h = 0.5
-        delta = K * G * (result_h - expected_h)
-        elo_dict[home] = elo_h + delta
-        elo_dict[away] = elo_a - delta
-    return elo_dict
-
-
 # Base : snapshot pre-tournoi (27 mai 2026), avec harmonisation des noms
 pre_tournament = elo[elo["snapshot_date"] == "2026-05-27"].copy()
 pre_tournament["country"] = pre_tournament["country"].replace(name_mapping)
@@ -270,12 +247,17 @@ def play_group_live(group_letter):
 # ---------------------------------------------------------------------------
 
 
+_lambda_cache = {}
+
+
 def play_knockout_match(team1, team2, country):
     host, other, neutral = resolve_host(team1, team2, country)
     elo_diff = elo_lookup[host] - elo_lookup[other]
-    X_new = pd.DataFrame({"elo_diff": [elo_diff], "neutral": [neutral]})
-    lambda_host = model_home.predict(X_new)[0]
-    lambda_other = model_away.predict(X_new)[0]
+    cache_key = (host, other, neutral)
+    if cache_key not in _lambda_cache:
+        X_new = pd.DataFrame({"elo_diff": [elo_diff], "neutral": [neutral]})
+        _lambda_cache[cache_key] = (model_home.predict(X_new)[0], model_away.predict(X_new)[0])
+    lambda_host, lambda_other = _lambda_cache[cache_key]
 
     score_host = np.random.poisson(lambda_host)
     score_other = np.random.poisson(lambda_other)
@@ -291,60 +273,6 @@ def play_knockout_match(team1, team2, country):
         else:
             return other, host
 
-
-# ---------------------------------------------------------------------------
-# Structure reelle du tableau final 2026 (Round of 32 -> Champion), verifiee
-# depuis le wikicode source de Wikipedia (cf. memoire projet). Remplace
-# l'ancien schema "1A v 2B" de wc_2026_fixtures.csv, qui s'est revele FAUX
-# (le vrai tableau FIFA n'est pas un simple "1er de groupe contre 2eme du
-# groupe suivant" -- certains matchs opposent deux 2emes entre eux, et les
-# meilleurs 3emes sont distribues individuellement contre des 1ers de groupe,
-# jamais entre eux). La phase de groupes 2026 est entierement terminee
-# (72/72 matchs reels connus), donc ces paires de Round of 32 sont des faits
-# fixes, plus une consequence d'un tirage de groupe simule.
-# ---------------------------------------------------------------------------
-
-R32_INFO = {
-    73: ("South Africa", "Canada", "United States"),
-    74: ("Germany", "Paraguay", "United States"),
-    75: ("Netherlands", "Morocco", "Mexico"),
-    76: ("Brazil", "Japan", "United States"),
-    77: ("France", "Sweden", "United States"),
-    78: ("Ivory Coast", "Norway", "United States"),
-    79: ("Mexico", "Ecuador", "Mexico"),
-    80: ("England", "DR Congo", "United States"),
-    81: ("USA", "Bosnia and Herzegovina", "United States"),
-    82: ("Belgium", "Senegal", "United States"),
-    83: ("Portugal", "Croatia", "Canada"),
-    84: ("Spain", "Austria", "United States"),
-    85: ("Switzerland", "Algeria", "Canada"),
-    86: ("Argentina", "Cape Verde", "United States"),
-    87: ("Colombia", "Ghana", "United States"),
-    88: ("Australia", "Egypt", "United States"),
-}
-# Vainqueurs deja connus (matchs joues fin juin 2026) ; 74 et 75 se sont
-# joues nul (1-1) puis decides aux tirs au but, donc le vainqueur ne peut
-# pas se deduire du score seul (non stocke dans results.csv).
-REAL_R32_WINNERS = {
-    73: "Canada", 74: "Paraguay", 75: "Morocco", 76: "Brazil",
-    77: "France", 78: "Norway", 79: "Mexico",
-}
-
-R16_WIRING = {89: (74, 77), 90: (73, 75), 91: (76, 78), 92: (79, 80),
-              93: (83, 84), 94: (81, 82), 95: (86, 88), 96: (85, 87)}
-R16_VENUE = {89: "United States", 90: "United States", 91: "United States", 92: "Mexico",
-             93: "United States", 94: "United States", 95: "United States", 96: "Canada"}
-
-QF_WIRING = {97: (89, 90), 98: (93, 94), 99: (91, 92), 100: (95, 96)}
-QF_VENUE = {97: "United States", 98: "United States", 99: "United States", 100: "United States"}
-
-SF_WIRING = {101: (97, 98), 102: (99, 100)}
-SF_VENUE = {101: "United States", 102: "United States"}
-
-FINAL_WIRING = (101, 102)
-FINAL_VENUE = "United States"
-
-ALL_R32_TEAMS = {team for pair in R32_INFO.values() for team in pair[:2]}
 
 
 def simulate_tournament():

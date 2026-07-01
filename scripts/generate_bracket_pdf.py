@@ -24,6 +24,15 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import FancyBboxPatch, Rectangle
 from xgboost import XGBRegressor
+from model_utils import (
+    compute_tournament_elo,
+    R32_INFO, REAL_R32_WINNERS,
+    R16_WIRING, R16_VENUE,
+    QF_WIRING, QF_VENUE,
+    SF_WIRING, SF_VENUE,
+    FINAL_WIRING, FINAL_VENUE,
+    R32_ORDER, R16_ORDER, QF_ORDER, SF_ORDER,
+)
 
 NAVY = "#1a3a5c"
 NAVY_LIGHT = "#3d6ea5"
@@ -102,24 +111,6 @@ real_lookup = {
     for _, row in real_2026.iterrows()
 }
 # NB : on matche par PAIRE D'EQUIPES, pas par date exacte.
-
-
-def compute_tournament_elo(wc_matches, pre_elo, K=40):
-    """Meme logique que run_simulation_live.py : Elo auto-calcule depuis results.csv."""
-    elo_dict = dict(pre_elo)
-    for _, m in wc_matches.sort_values("date").iterrows():
-        home, away = m["home_team"], m["away_team"]
-        if home not in elo_dict or away not in elo_dict:
-            continue
-        elo_h, elo_a = elo_dict[home], elo_dict[away]
-        expected_h = 1 / (1 + 10 ** ((elo_a - elo_h) / 400))
-        gd = abs(m["home_score"] - m["away_score"])
-        G = 1 if gd <= 1 else (1.5 if gd == 2 else (11 + gd) / 8)
-        result_h = 1.0 if m["home_score"] > m["away_score"] else (0.0 if m["home_score"] < m["away_score"] else 0.5)
-        delta = K * G * (result_h - expected_h)
-        elo_dict[home] = elo_h + delta
-        elo_dict[away] = elo_a - delta
-    return elo_dict
 
 
 pre_tournament = elo[elo["snapshot_date"] == "2026-05-27"].copy()
@@ -230,57 +221,6 @@ qualified_thirds = {g for g, _, _ in third_placed_sorted[:8]}
 #    "...round of 32"), recoupe avec les 4 resultats reels deja connus
 #    (cf. memoire projet pour le detail de la verification).
 # ---------------------------------------------------------------------------
-
-# Round of 32 : (equipe1, equipe2, pays hote du match) par numero de match
-# officiel FIFA (73-88).
-R32_INFO = {
-    73: ("South Africa", "Canada", "United States"),
-    74: ("Germany", "Paraguay", "United States"),
-    75: ("Netherlands", "Morocco", "Mexico"),
-    76: ("Brazil", "Japan", "United States"),
-    77: ("France", "Sweden", "United States"),
-    78: ("Ivory Coast", "Norway", "United States"),
-    79: ("Mexico", "Ecuador", "Mexico"),
-    80: ("England", "DR Congo", "United States"),
-    81: ("USA", "Bosnia and Herzegovina", "United States"),
-    82: ("Belgium", "Senegal", "United States"),
-    83: ("Portugal", "Croatia", "Canada"),
-    84: ("Spain", "Austria", "United States"),
-    85: ("Switzerland", "Algeria", "Canada"),
-    86: ("Argentina", "Cape Verde", "United States"),
-    87: ("Colombia", "Ghana", "United States"),
-    88: ("Australia", "Egypt", "United States"),
-}
-# Vainqueurs deja connus (matchs joues entre le 28/06 et le 29/06/2026) ;
-# matchs 74 et 75 se sont joues nul puis decides aux tirs au but, donc le
-# vainqueur ne peut pas se deduire du score (1-1) seul.
-REAL_R32_WINNERS = {
-    73: "Canada", 74: "Paraguay", 75: "Morocco", 76: "Brazil",
-    77: "France", 78: "Norway", 79: "Mexico",
-}
-
-R16_WIRING = {89: (74, 77), 90: (73, 75), 91: (76, 78), 92: (79, 80),
-              93: (83, 84), 94: (81, 82), 95: (86, 88), 96: (85, 87)}
-R16_VENUE = {89: "United States", 90: "United States", 91: "United States", 92: "Mexico",
-             93: "United States", 94: "United States", 95: "United States", 96: "Canada"}
-
-QF_WIRING = {97: (89, 90), 98: (93, 94), 99: (91, 92), 100: (95, 96)}
-QF_VENUE = {97: "United States", 98: "United States", 99: "United States", 100: "United States"}
-
-SF_WIRING = {101: (97, 98), 102: (99, 100)}
-SF_VENUE = {101: "United States", 102: "United States"}
-
-FINAL_WIRING = (101, 102)
-FINAL_VENUE = "United States"
-
-# Ordres choisis pour que des paires consecutives dans chaque liste
-# correspondent bien au match du tour suivant qu'elles alimentent
-# (necessaire pour le dessin du bracket plus bas).
-R32_ORDER = [74, 77, 73, 75, 83, 84, 81, 82, 76, 78, 79, 80, 86, 88, 85, 87]
-R16_ORDER = [89, 90, 93, 94, 91, 92, 95, 96]
-QF_ORDER = [97, 98, 99, 100]
-SF_ORDER = [101, 102]
-
 
 def predict_knockout(team1, team2, country, n_sim=5000):
     host, other, neutral = resolve_host(team1, team2, country)

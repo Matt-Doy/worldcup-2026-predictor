@@ -13,24 +13,26 @@ Built as a personal/learning project to combine football data, machine learning,
 
 The group draw is fixed (it already happened), but the **Round of 32 knockout pairing is asymmetric** — not a simple "1st place vs. 2nd place of the next group" scheme. It was reverse-engineered from the official FIFA match numbering (Wikipedia) and cross-validated against real results before being hardcoded into the simulation (see `scripts/run_simulation_live.py`).
 
-## Results (live forecast, as of 2026-06-30)
+## Results (live forecast, as of 2026-07-01)
 
-Group stage 100% complete (72/72 real matches). Top 10 championship probabilities from `n_sim=1000` Monte Carlo draws on the now-fully-real bracket:
+Group stage + Round of 32 both complete (79/79 real matches). Top 10 championship probabilities from `n_sim=5000` Monte Carlo draws on the remaining bracket:
 
 | Team | Champion % |
 |---|---|
-| Spain | 26.6% |
-| Argentina | 22.4% |
-| France | 19.2% |
-| Brazil | 5.8% |
-| England | 5.8% |
-| Colombia | 4.2% |
-| Portugal | 4.0% |
-| Senegal | 1.9% |
-| Croatia | 1.4% |
-| Norway | 1.4% |
+| France | 28.3% |
+| Argentina | 24.2% |
+| Spain | 21.7% |
+| Brazil | 6.5% |
+| England | 5.1% |
+| Colombia | 4.5% |
+| Portugal | 3.8% |
+| Norway | 2.1% |
+| Morocco | 1.4% |
+| Paraguay | 1.1% |
 
 Full table: `data/processed/wc2026_stage_probabilities_live.csv`. A styled PDF report (championship probability chart, group standings, and full bracket tree) is generated at `data/processed/wc2026_bracket_prediction.pdf`.
+
+**Bookmaker comparison (2026-07-01):** France 28.3% vs bookmakers ~28.6% — essentially identical. Argentina 24.2% vs ~22%, Spain 21.7% vs ~13.3% (Spain slightly over-rated by the model, likely due to injury/tactical information not captured by Elo). Overall the model tracks bookmaker consensus closely for the top contenders.
 
 ## Model validation
 
@@ -55,17 +57,16 @@ notebooks/
   01_exploration.ipynb    exploratory data analysis and initial prototyping (data merging,
                            feature engineering, first group/knockout simulation logic)
 scripts/
+  model_utils.py          shared bracket constants + live Elo computation (single update point)
   model_selection.py      XGBoost objective/depth grid search, validated on a real WC backtest
   backtest_worldcups.py   out-of-sample validation on 2014-2026 World Cup matches
   feature_test.py         tests rolling-form and rank-diff features (rejected, kept for reference)
   feature_test_bootstrap.py   statistical significance check for feature_test.py's results
-  run_simulation.py       full pre-tournament Monte Carlo (baseline; simplified bracket pairing)
   run_simulation_live.py  current forecast: real 2026 results locked in, only remaining
                            matches simulated, using the verified real FIFA bracket structure
   generate_bracket_pdf.py builds the PDF report from run_simulation_live.py's output
+  update_elo.py           scrapes eloratings.net and updates elo_ratings_wc2026.csv (run daily)
 ```
-
-`notebooks/01_exploration.ipynb` documents the project's actual development path, including dead ends (e.g. the original naive knockout-pairing scheme, later found wrong and fixed in the scripts). It's kept as-is for that reason rather than rewritten to match the final approach.
 
 ## Running it
 
