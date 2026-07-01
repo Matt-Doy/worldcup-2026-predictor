@@ -78,7 +78,6 @@ model_home.fit(train[features], train["home_score"])
 model_away = XGBRegressor(**MODEL_PARAMS, monotone_constraints=(-1, 0))
 model_away.fit(train[features], train["away_score"])
 
-elo_lookup = elo_latest.set_index("country")["rating"]
 group_letters = sorted(teams["group"].unique())
 
 
@@ -92,7 +91,7 @@ def resolve_host(team1, team2, country):
 
 
 # ---------------------------------------------------------------------------
-# 2. Vrais resultats 2026 deja joues
+# 2. Vrais resultats 2026 + Elo mis a jour match par match
 # ---------------------------------------------------------------------------
 
 real_2026 = results[
@@ -102,11 +101,31 @@ real_lookup = {
     frozenset([row["home_team"], row["away_team"]]): (row["home_team"], row["away_team"], row["home_score"], row["away_score"])
     for _, row in real_2026.iterrows()
 }
-# NB : on matche par PAIRE D'EQUIPES, pas par date exacte -- la date reelle
-# du match dans results.csv peut differer de quelques jours (parfois +5j)
-# de la date programmee dans wc_2026_fixtures.csv. Un matching par date exacte
-# faisait passer a tort des matchs deja joues pour "a venir" et les faisait
-# predire par le modele au lieu d'utiliser le vrai resultat connu.
+# NB : on matche par PAIRE D'EQUIPES, pas par date exacte.
+
+
+def compute_tournament_elo(wc_matches, pre_elo, K=40):
+    """Meme logique que run_simulation_live.py : Elo auto-calcule depuis results.csv."""
+    elo_dict = dict(pre_elo)
+    for _, m in wc_matches.sort_values("date").iterrows():
+        home, away = m["home_team"], m["away_team"]
+        if home not in elo_dict or away not in elo_dict:
+            continue
+        elo_h, elo_a = elo_dict[home], elo_dict[away]
+        expected_h = 1 / (1 + 10 ** ((elo_a - elo_h) / 400))
+        gd = abs(m["home_score"] - m["away_score"])
+        G = 1 if gd <= 1 else (1.5 if gd == 2 else (11 + gd) / 8)
+        result_h = 1.0 if m["home_score"] > m["away_score"] else (0.0 if m["home_score"] < m["away_score"] else 0.5)
+        delta = K * G * (result_h - expected_h)
+        elo_dict[home] = elo_h + delta
+        elo_dict[away] = elo_a - delta
+    return elo_dict
+
+
+pre_tournament = elo[elo["snapshot_date"] == "2026-05-27"].copy()
+pre_tournament["country"] = pre_tournament["country"].replace(name_mapping)
+pre_elo_base = pre_tournament.set_index("country")["rating"].to_dict()
+elo_lookup = pd.Series(compute_tournament_elo(real_2026, pre_elo_base))
 
 
 def get_real_score(team1, team2):
@@ -235,7 +254,10 @@ R32_INFO = {
 # Vainqueurs deja connus (matchs joues entre le 28/06 et le 29/06/2026) ;
 # matchs 74 et 75 se sont joues nul puis decides aux tirs au but, donc le
 # vainqueur ne peut pas se deduire du score (1-1) seul.
-REAL_R32_WINNERS = {73: "Canada", 74: "Paraguay", 75: "Morocco", 76: "Brazil"}
+REAL_R32_WINNERS = {
+    73: "Canada", 74: "Paraguay", 75: "Morocco", 76: "Brazil",
+    77: "France", 78: "Norway", 79: "Mexico",
+}
 
 R16_WIRING = {89: (74, 77), 90: (73, 75), 91: (76, 78), 92: (79, 80),
               93: (83, 84), 94: (81, 82), 95: (86, 88), 96: (85, 87)}
